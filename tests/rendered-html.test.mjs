@@ -45,6 +45,9 @@ test("server-renders the MUSE product workspace", async () => {
   assert.match(html, /理解需求/);
   assert.match(html, /单条预览/);
   assert.match(html, /批量生成/);
+  assert.match(html, /实时状态/);
+  assert.match(html, /方案编辑中/);
+  assert.match(html, /状态演示/);
   assert.match(html, /role="status"/);
 });
 
@@ -71,6 +74,17 @@ test("ships production metadata, preview art, and responsive styles", async () =
   assert.match(page, /KnowledgePage/);
   assert.match(page, /AnalyticsPage/);
   assert.match(page, /SettingsPage/);
+  assert.match(page, /type GenerationState/);
+  assert.match(page, /WorkflowStatusPanel/);
+  assert.match(page, /状态演示/);
+  assert.match(page, /预览排队中/);
+  assert.match(page, /单条预览生成中/);
+  assert.match(page, /待审核/);
+  assert.match(page, /部分失败/);
+  assert.match(page, /onSelect:\s*\(stage: number\)/);
+  assert.match(css, /\.workflow-status/);
+  assert.match(css, /\.state-simulator/);
+  assert.match(css, /\.status-tone-running/);
   assert.match(css, /@media \(max-width:\s*1180px\)/);
   assert.match(css, /@media \(max-width:\s*760px\)/);
 

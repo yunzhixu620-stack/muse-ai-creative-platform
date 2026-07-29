@@ -25,6 +25,92 @@ type Task = {
   time: string;
 };
 
+type GenerationState =
+  | "draft"
+  | "queued"
+  | "preview-generating"
+  | "preview-ready"
+  | "batch-queued"
+  | "batch-generating"
+  | "review"
+  | "completed"
+  | "failed";
+
+const generationStateCopy: Record<
+  GenerationState,
+  {
+    label: string;
+    detail: string;
+    stage: number;
+    progress: number;
+    tone: string;
+  }
+> = {
+  draft: {
+    label: "方案编辑中",
+    detail: "创意方案已自动保存，确认后可生成单条预览。",
+    stage: 3,
+    progress: 0,
+    tone: "editing",
+  },
+  queued: {
+    label: "预览排队中",
+    detail: "任务已进入队列，正在分配生成资源。",
+    stage: 4,
+    progress: 8,
+    tone: "queued",
+  },
+  "preview-generating": {
+    label: "单条预览生成中",
+    detail: "正在执行提示词增强、图片生成与品牌检查。",
+    stage: 4,
+    progress: 58,
+    tone: "running",
+  },
+  "preview-ready": {
+    label: "单条预览已完成",
+    detail: "预览已通过品牌与合规检查，请确认后批量生成。",
+    stage: 4,
+    progress: 100,
+    tone: "success",
+  },
+  "batch-queued": {
+    label: "批量任务排队中",
+    detail: "批量任务已创建，25 个素材任务等待执行。",
+    stage: 5,
+    progress: 4,
+    tone: "queued",
+  },
+  "batch-generating": {
+    label: "批量生成中",
+    detail: "18 / 25 个素材已完成，失败项会自动重试。",
+    stage: 5,
+    progress: 72,
+    tone: "running",
+  },
+  review: {
+    label: "待审核",
+    detail: "25 个素材已生成完毕，正在等待质量与合规审核。",
+    stage: 5,
+    progress: 100,
+    tone: "review",
+  },
+  completed: {
+    label: "已完成",
+    detail: "审核已通过，素材已入库并可以导出或投放。",
+    stage: 5,
+    progress: 100,
+    tone: "success",
+  },
+  failed: {
+    label: "部分失败",
+    detail: "21 / 25 个素材成功，4 个失败项可以单独重试。",
+    stage: 5,
+    progress: 84,
+    tone: "danger",
+  },
+};
+
 const navGroups: Array<{
   label: string;
   items: Array<{ key: ModuleKey; icon: string; label: string; badge?: string }>;
@@ -356,22 +442,132 @@ function Sidebar({
   );
 }
 
-function StageRail({ current }: { current: number }) {
-  const stages = ["理解需求", "智能选品", "创意方案", "单条预览", "批量生成"];
+function StageRail({
+  current,
+  maxAvailable,
+  onSelect,
+}: {
+  current: number;
+  maxAvailable: number;
+  onSelect: (stage: number) => void;
+}) {
+  const stages = [
+    ["理解需求", "目标与渠道"],
+    ["智能选品", "商品与卖点"],
+    ["创意方案", "文案与画面"],
+    ["单条预览", "确认生成效果"],
+    ["批量生成", "任务与审核"],
+  ];
   return (
-    <div className="stage-rail">
-      {stages.map((stage, index) => (
-        <div
-          key={stage}
-          className={`${index + 1 === current ? "current" : ""} ${
-            index + 1 < current ? "complete" : ""
-          }`}
-        >
-          <span>{index + 1 < current ? "✓" : index + 1}</span>
-          <b>{stage}</b>
-          {index < stages.length - 1 && <i />}
+    <div className="stage-rail" aria-label="生成流程">
+      {stages.map(([label, description], index) => {
+        const step = index + 1;
+        const available = step <= maxAvailable;
+        return (
+          <button
+            type="button"
+            key={label}
+            className={`${step === current ? "current" : ""} ${
+              step < maxAvailable ? "complete" : ""
+            } ${available ? "available" : "locked"}`}
+            onClick={() => onSelect(step)}
+            disabled={!available}
+            aria-current={step === current ? "step" : undefined}
+            aria-label={`${label}：${available ? "可查看" : "尚未解锁"}`}
+          >
+            <span>{step < maxAvailable ? "✓" : step}</span>
+            <strong>
+              <b>{label}</b>
+              <small>{description}</small>
+            </strong>
+            {index < stages.length - 1 && <i />}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function WorkflowStatusPanel({
+  state,
+  progress,
+  onStateChange,
+  onOpen,
+}: {
+  state: GenerationState;
+  progress: number;
+  onStateChange: (state: GenerationState) => void;
+  onOpen: () => void;
+}) {
+  const copy = generationStateCopy[state];
+  const stateIcon: Record<GenerationState, string> = {
+    draft: "✎",
+    queued: "◷",
+    "preview-generating": "↻",
+    "preview-ready": "✓",
+    "batch-queued": "◷",
+    "batch-generating": "↻",
+    review: "⌕",
+    completed: "✓",
+    failed: "!",
+  };
+  const demos: Array<{ state: GenerationState; label: string }> = [
+    { state: "draft", label: "方案编辑" },
+    { state: "queued", label: "排队中" },
+    { state: "preview-generating", label: "生成中" },
+    { state: "preview-ready", label: "预览完成" },
+    { state: "batch-generating", label: "批量生成" },
+    { state: "review", label: "待审核" },
+    { state: "completed", label: "已完成" },
+    { state: "failed", label: "部分失败" },
+  ];
+
+  return (
+    <div className={`workflow-status status-tone-${copy.tone}`}>
+      <div className="workflow-status-main">
+        <span className="workflow-status-icon">{stateIcon[state]}</span>
+        <div className="workflow-status-copy">
+          <div>
+            <span className="live-label"><i /> 实时状态</span>
+            <b>{copy.label}</b>
+            <small>任务 PRE-20260729-0796</small>
+          </div>
+          <p>{copy.detail}</p>
         </div>
-      ))}
+        <div className="workflow-progress">
+          <span>
+            <b>{progress}%</b>
+            <small>{progress < 100 ? "处理中" : "已完成"}</small>
+          </span>
+          <progress value={progress} max="100" />
+        </div>
+        <button type="button" className="status-detail-button" onClick={onOpen}>
+          {state === "review"
+            ? "进入审核"
+            : state === "completed"
+              ? "查看素材"
+              : state === "failed"
+                ? "重试失败项"
+                : "查看任务"}
+          <span>→</span>
+        </button>
+      </div>
+      <div className="state-simulator" aria-label="状态演示切换">
+        <span>状态演示</span>
+        <div>
+          {demos.map((demo) => (
+            <button
+              type="button"
+              key={demo.state}
+              className={state === demo.state ? "active" : ""}
+              onClick={() => onStateChange(demo.state)}
+            >
+              {demo.label}
+            </button>
+          ))}
+        </div>
+        <small>点击可直接查看各状态</small>
+      </div>
     </div>
   );
 }
@@ -401,14 +597,17 @@ function CreativeMockup({ video = false }: { video?: boolean }) {
 function GenerationWorkspace({
   mediaType,
   notify,
+  onNavigate,
 }: {
   mediaType: "image" | "video";
   notify: (message: string) => void;
+  onNavigate: (key: ModuleKey) => void;
 }) {
   const isVideo = mediaType === "video";
   const [stage, setStage] = useState(3);
   const [message, setMessage] = useState("");
-  const [generating, setGenerating] = useState(false);
+  const [generationState, setGenerationState] = useState<GenerationState>("draft");
+  const [progress, setProgress] = useState(0);
   const [messages, setMessages] = useState([
     {
       role: "agent",
@@ -445,6 +644,32 @@ function GenerationWorkspace({
     }, 450);
   };
 
+  const setDemoState = (nextState: GenerationState, shouldNotify = true) => {
+    const next = generationStateCopy[nextState];
+    setGenerationState(nextState);
+    setProgress(next.progress);
+    setStage(next.stage);
+    if (shouldNotify) notify(`状态已切换为：${next.label}`);
+  };
+
+  const handleStatusAction = () => {
+    if (generationState === "failed") {
+      setDemoState("batch-queued", false);
+      notify("4 个失败项已重新进入队列");
+      window.setTimeout(() => setDemoState("batch-generating", false), 700);
+      return;
+    }
+    if (generationState === "review") {
+      onNavigate("review");
+      return;
+    }
+    if (generationState === "completed") {
+      onNavigate("assets");
+      return;
+    }
+    onNavigate("tasks");
+  };
+
   const primaryAction = () => {
     if (stage < 3) {
       setStage(stage + 1);
@@ -452,22 +677,56 @@ function GenerationWorkspace({
       return;
     }
     if (stage === 3) {
-      setGenerating(true);
+      setDemoState("queued", false);
       notify("预览任务已创建，仅生成 1 条素材");
       window.setTimeout(() => {
-        setGenerating(false);
-        setStage(4);
+        setGenerationState("preview-generating");
+        setProgress(34);
+      }, 550);
+      window.setTimeout(() => setProgress(72), 1200);
+      window.setTimeout(() => {
+        setDemoState("preview-ready", false);
         notify("单条预览已完成，可以确认或继续修改");
-      }, 1000);
+      }, 2000);
       return;
     }
     if (stage === 4) {
-      setStage(5);
-      notify("批量任务 BAT-20260729-0821 已进入任务中心");
+      if (generationState !== "preview-ready") {
+        notify("请等待单条预览完成后再提交批量任务");
+        return;
+      }
+      setDemoState("batch-queued", false);
+      notify("批量任务 BAT-20260729-0821 已进入队列");
+      window.setTimeout(() => {
+        setGenerationState("batch-generating");
+        setProgress(28);
+      }, 650);
+      window.setTimeout(() => setProgress(72), 1500);
+      window.setTimeout(() => {
+        setDemoState("review", false);
+        notify("批量生成已完成，25 个素材等待审核");
+      }, 2600);
       return;
     }
-    notify("任务已在后台生成，完成后会通知你");
+    handleStatusAction();
   };
+
+  const currentCopy = generationStateCopy[generationState];
+  const isBusy = [
+    "queued",
+    "preview-generating",
+    "batch-queued",
+    "batch-generating",
+  ].includes(generationState);
+  const previewBusy = ["queued", "preview-generating"].includes(generationState);
+  const stageCopy = [
+    "",
+    "确认投放目标与约束",
+    "确认主推商品与卖点",
+    "确认创意方案",
+    "确认单条预览",
+    "查看批量任务状态",
+  ];
 
   return (
     <section className="studio-page">
@@ -478,13 +737,27 @@ function GenerationWorkspace({
             {isVideo ? "早八通勤 30 秒防晒短片" : "夏日通勤防晒 · 轻盈出门"}
           </span>
           <span className="saved-state">✓ 已自动保存</span>
+          <span className="switch-hint">提示：点击流程步骤可快速切换</span>
         </div>
         <div>
           <button className="icon-text-button">↗ 分享</button>
           <button className="icon-text-button">•••</button>
         </div>
       </div>
-      <StageRail current={stage} />
+      <StageRail
+        current={stage}
+        maxAvailable={currentCopy.stage}
+        onSelect={(nextStage) => {
+          setStage(nextStage);
+          notify(`正在查看第 ${nextStage} 步`);
+        }}
+      />
+      <WorkflowStatusPanel
+        state={generationState}
+        progress={progress}
+        onStateChange={setDemoState}
+        onOpen={handleStatusAction}
+      />
       <div className="studio-grid">
         <div className="agent-panel">
           <div className="agent-panel-head">
@@ -492,7 +765,7 @@ function GenerationWorkspace({
               <span className="agent-avatar">✦</span>
               <div>
                 <b>Muse Agent</b>
-                <small><i /> 正在协作 · 创意方案阶段</small>
+                <small><i /> {currentCopy.label} · 第 {currentCopy.stage} 阶段</small>
               </div>
             </div>
             <button>⌁ 上下文</button>
@@ -645,11 +918,13 @@ function GenerationWorkspace({
                   <button onClick={() => notify("已进入局部编辑模式")}>⌘ 局部修改</button>
                   <button onClick={() => notify("已基于相同方案重新生成")}>↻ 保持方案重做</button>
                 </div>
-                {generating && (
+                {previewBusy && (
                   <div className="generating-cover">
                     <span className="generation-spinner" />
-                    <b>正在生成单条预览</b>
-                    <small>已冻结当前方案与知识版本</small>
+                    <b>{currentCopy.label}</b>
+                    <small>{currentCopy.detail}</small>
+                    <progress value={progress} max="100" />
+                    <em>{progress}%</em>
                   </div>
                 )}
               </div>
@@ -657,8 +932,9 @@ function GenerationWorkspace({
           </div>
           <div className="plan-footer">
             <div>
-              <span>当前阶段</span>
-              <b>{stage === 3 ? "确认创意方案" : stage === 4 ? "确认单条预览" : "批量任务已提交"}</b>
+              <span>当前操作</span>
+              <b>{stageCopy[stage]}</b>
+              <small>{currentCopy.label}</small>
             </div>
             <button
               className="secondary-button"
@@ -670,13 +946,19 @@ function GenerationWorkspace({
             >
               返回上一步
             </button>
-            <button className="primary-button" onClick={primaryAction} disabled={generating}>
+            <button className="primary-button" onClick={primaryAction} disabled={isBusy}>
               {stage === 3
                 ? "生成 1 条预览"
                 : stage === 4
                   ? "确认预览并批量生成"
                   : stage === 5
-                    ? "查看任务进度"
+                    ? generationState === "review"
+                      ? "进入审核"
+                      : generationState === "completed"
+                        ? "查看素材"
+                        : generationState === "failed"
+                          ? "重试失败项"
+                          : "查看任务进度"
                     : "确认并继续"}
               <span>→</span>
             </button>
@@ -1189,9 +1471,21 @@ export default function Home() {
       case "dashboard":
         return <Dashboard navigate={setActive} />;
       case "image":
-        return <GenerationWorkspace mediaType="image" notify={notify} />;
+        return (
+          <GenerationWorkspace
+            mediaType="image"
+            notify={notify}
+            onNavigate={setActive}
+          />
+        );
       case "video":
-        return <GenerationWorkspace mediaType="video" notify={notify} />;
+        return (
+          <GenerationWorkspace
+            mediaType="video"
+            notify={notify}
+            onNavigate={setActive}
+          />
+        );
       case "tasks":
         return <TasksPage notify={notify} />;
       case "review":
