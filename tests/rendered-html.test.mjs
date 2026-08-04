@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { access, readFile } from "node:fs/promises";
+import { access, readFile, readdir } from "node:fs/promises";
 import test from "node:test";
 
 async function render(pathname = "/") {
@@ -92,4 +92,25 @@ test("ships production metadata, preview art, and responsive styles", async () =
   await assert.rejects(
     access(new URL("../app/_sites-preview/SkeletonPreview.tsx", import.meta.url)),
   );
+});
+
+test("ships the full application directly on GitHub Pages", async () => {
+  const [index, pagesEntry, pagesConfig, packageJson, assets] = await Promise.all([
+    readFile(new URL("../docs/index.html", import.meta.url), "utf8"),
+    readFile(new URL("../github-pages-src/main.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../vite.pages.config.ts", import.meta.url), "utf8"),
+    readFile(new URL("../package.json", import.meta.url), "utf8"),
+    readdir(new URL("../docs/assets/", import.meta.url)),
+  ]);
+
+  assert.match(index, /<div id="root"><\/div>/);
+  assert.match(index, /\/muse-ai-creative-platform\/assets\/index-[^"']+\.js/);
+  assert.match(index, /\/muse-ai-creative-platform\/assets\/index-[^"']+\.css/);
+  assert.doesNotMatch(index, /http-equiv=["']refresh["']/i);
+  assert.match(pagesEntry, /import App from "\.\.\/app\/page"/);
+  assert.match(pagesEntry, /createRoot\(root\)\.render/);
+  assert.match(pagesConfig, /base:\s*"\/muse-ai-creative-platform\/"/);
+  assert.match(packageJson, /"build:pages": "vite build --config vite\.pages\.config\.ts"/);
+  assert.ok(assets.some((file) => /^index-.+\.js$/.test(file)));
+  assert.ok(assets.some((file) => /^index-.+\.css$/.test(file)));
 });

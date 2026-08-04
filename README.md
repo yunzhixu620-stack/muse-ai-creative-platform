@@ -4,7 +4,9 @@
 
 ## 在线演示
 
-[打开 MUSE 在线演示](https://muse-ai-creative-ops.yunzhixu620.chatgpt.site)
+[打开 GitHub Pages 完整演示](https://yunzhixu620-stack.github.io/muse-ai-creative-platform/)
+
+[备用演示地址](https://muse-ai-creative-ops.yunzhixu620.chatgpt.site)
 
 ## 已实现模块
 
@@ -39,6 +41,7 @@ npm run dev
 
 ```bash
 npm run build
+npm run build:pages
 npm test
 ```
 
