@@ -39,4 +39,6 @@ next-env.d.ts
 /dist/
 /.wrangler/
 /outputs/
-/work/
+/work/*
+!/work/AI广告素材生成平台_完整产品方案.md
+!/work/AI广告素材生成平台_五大Agent详细设计.md

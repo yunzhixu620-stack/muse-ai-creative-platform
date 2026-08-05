@@ -6,6 +6,7 @@ type ModuleKey =
   | "dashboard"
   | "image"
   | "video"
+  | "agents"
   | "tasks"
   | "review"
   | "assets"
@@ -35,6 +36,27 @@ type GenerationState =
   | "review"
   | "completed"
   | "failed";
+
+type AgentKey = "requirement" | "product" | "image" | "video" | "review";
+
+type AgentSpec = {
+  key: AgentKey;
+  name: string;
+  icon: string;
+  stage: string;
+  purpose: string;
+  responsibility: string;
+  boundary: string;
+  input: string[];
+  output: string[];
+  logic: Array<{ title: string; detail: string; gate?: string }>;
+  rules: Array<{ label: string; detail: string }>;
+  exceptions: string[];
+  metrics: string[];
+  confirmation: string;
+  handoff: string;
+  prohibited: string;
+};
 
 const generationStateCopy: Record<
   GenerationState,
@@ -111,6 +133,162 @@ const generationStateCopy: Record<
   },
 };
 
+const agentCatalog: AgentSpec[] = [
+  {
+    key: "requirement",
+    name: "需求理解 Agent",
+    icon: "需",
+    stage: "阶段 1 · 需求确认",
+    purpose: "把运营的自然语言诉求转成可验证、可执行的投放需求，不替用户做业务决策。",
+    responsibility: "提取投放目标、人群、渠道、素材类型、规格、数量、时限和限制；识别冲突并只追问高影响缺口。",
+    boundary: "不选品、不写创意、不创建生成任务；没有依据的字段必须保留 unknown。",
+    input: ["用户自然语言与附件", "活动上下文与渠道模板", "租户默认配置", "历史会话中已确认事实"],
+    output: ["requirement_patch", "缺失字段 missing_fields", "冲突 conflicts", "确认摘要 confirmation_card"],
+    logic: [
+      { title: "识别业务目标", detail: "将拉新、转化、种草、促活等表达归一为标准 objective，并保留用户原话。" },
+      { title: "抽取投放要素", detail: "识别人群、渠道、区域、预算、规格、数量、时限、素材类型和限制条件。" },
+      { title: "补全可信默认值", detail: "仅使用已发布的渠道模板、活动配置与租户默认值，并记录来源。" },
+      { title: "校验缺失与冲突", detail: "检查渠道规格、数量上限、截止时间和目标之间是否矛盾。" },
+      { title: "最小化追问", detail: "按对结果影响排序，每轮最多询问 3 个阻塞问题，非阻塞信息可标为待定。" },
+      { title: "形成确认快照", detail: "输出结构化补丁和可读摘要，用户确认后冻结需求版本。", gate: "用户确认后才能交给选品 Agent" },
+    ],
+    rules: [
+      { label: "必填字段", detail: "objective、audience、channel、media_type、spec、quantity" },
+      { label: "事实规则", detail: "推断内容必须标记 inferred；无证据不得写成确定事实" },
+      { label: "优先级", detail: "法律/平台规则 > 品牌规则 > 活动要求 > 用户偏好" },
+      { label: "修改范围", detail: "只能修改 requirement.*，不能写入商品、创意或审核字段" },
+    ],
+    exceptions: ["渠道与规格冲突：阻断并给出合法规格", "目标不清晰：给出 2–3 个可选目标，不擅自决定", "信息不足但不阻塞：标记待定并允许继续"],
+    metrics: ["字段提取准确率", "必填字段完整率", "平均追问轮数", "用户手改率", "错误推进率"],
+    confirmation: "必填字段完整、冲突清零，并由用户明确确认需求摘要。",
+    handoff: "把冻结的 requirement_snapshot_id 交给选品 Agent。",
+    prohibited: "禁止选择商品、生成文案、承诺效果或直接启动生产。",
+  },
+  {
+    key: "product",
+    name: "选品 Agent",
+    icon: "品",
+    stage: "阶段 2 · 商品确认",
+    purpose: "在已确认需求和可售商品范围内筛选、排序候选，解释推荐理由与风险，最终选择权归用户。",
+    responsibility: "执行硬过滤、候选召回、适配度评分、业务排序与多样性控制，输出 3–5 个候选商品。",
+    boundary: "只推荐候选，不自动锁定商品；不改价格库存、不生成创意、不调用生成模型。",
+    input: ["需求快照", "商品/库存/价格/授权知识", "渠道和地域限制", "活动与素材完整度", "素材级历史表现"],
+    output: ["ranked_candidates", "推荐理由 reasons", "卖点 evidence", "风险 risks", "selection_patch"],
+    logic: [
+      { title: "执行硬过滤", detail: "剔除下架、无库存、授权过期、地域不符、渠道禁投、价格带不符和素材信息缺失商品。" },
+      { title: "多路候选召回", detail: "按目标、人群、类目、活动、渠道和历史优秀素材并行召回，合并去重。" },
+      { title: "计算适配得分", detail: "目标25% + 人群15% + 渠道12% + 库存12% + 活动10% + 资产10% + 历史10% + 新鲜度6%。" },
+      { title: "控制候选多样性", detail: "避免候选被单一价格带、同款或同一卖点占满；至少保留一个探索型商品。" },
+      { title: "生成可解释推荐", detail: "每个候选输出匹配点、可用卖点、证据来源、潜在风险和不推荐原因。" },
+      { title: "等待用户确认", detail: "用户可比较、换一批或指定商品；确认后冻结商品与卖点快照。", gate: "用户确认商品后才能进入图片或视频 Agent" },
+    ],
+    rules: [
+      { label: "硬过滤", detail: "availability、inventory、authorization、region、channel_policy 必须全部通过" },
+      { label: "候选数量", detail: "默认展示 3 个，最多 5 个；候选不足时解释原因" },
+      { label: "历史数据", detail: "只作排序信号，不把相关性表述为因果结论" },
+      { label: "卖点证据", detail: "卖点必须引用有效商品知识版本，禁止模型自行补写功效" },
+    ],
+    exceptions: ["无可用商品：返回零结果原因和可放宽条件", "库存或授权临期：降权并显著提示", "用户指定商品不合规：保留选择但阻止确认"],
+    metrics: ["Top3 采用率", "硬过滤误放率", "推荐理由可信度", "零结果率", "换一批率"],
+    confirmation: "商品可售可投、卖点有证据，用户确认 product_id 与 selling_points。",
+    handoff: "按素材类型把 product_snapshot_id 交给图片或视频生成 Agent。",
+    prohibited: "禁止代替用户最终选品、修改商品资料或为了分数绕过硬过滤。",
+  },
+  {
+    key: "image",
+    name: "图片生成 Agent",
+    icon: "图",
+    stage: "阶段 3–5 · 图片生产",
+    purpose: "在确认需求与商品事实内，完成图片创意、文案、构图、单条预览和批量变体生产。",
+    responsibility: "内部完成创意结构、文案、版式、提示词编译、模型调用、后处理与版本管理，但不再拆成更多 Agent。",
+    boundary: "只处理图片；不能改已确认商品事实和强制品牌规则，预览阶段每次只能生成 1 张。",
+    input: ["需求与商品快照", "品牌/渠道/合规知识", "参考图与爆款复刻约束", "用户反馈与锁定字段", "图片模型能力"],
+    output: ["image_creative_plan", "prompt_package", "preview_asset", "batch_task", "generation_trace"],
+    logic: [
+      { title: "生成结构化创意", detail: "确定主题、主副文案、视觉风格、构图、色板、商品占比、Logo 与 CTA 位置。" },
+      { title: "执行生成前校验", detail: "检查文案事实、禁用词、授权素材、图片尺寸、安全区与必需品牌元素。" },
+      { title: "编译模型输入", detail: "把结构化字段转成正向/负向提示词、参考图权重、种子和模型参数。" },
+      { title: "生成单条预览", detail: "只创建 1 个预览任务；保存模型、Prompt、知识和参数快照。" },
+      { title: "吸收反馈并版本化", detail: "区分局部修改、保持方案重做和返回创意方案，锁定未修改字段。" },
+      { title: "生成批量变体", detail: "围绕文案、构图、背景和种子做受控变体，避免 25 张同质化。" },
+      { title: "后处理与送审", detail: "执行尺寸、OCR、Logo、安全区、文件格式和质量检查，然后移交审核 Agent。", gate: "预览由用户确认后才允许批量生成" },
+    ],
+    rules: [
+      { label: "预览数量", detail: "一次严格生成 1 张，重做产生新版本而不是覆盖" },
+      { label: "事实保护", detail: "功效、价格、规格、活动信息只能来自确认快照" },
+      { label: "变体策略", detail: "强制字段锁定；可变字段按 variant_matrix 组合并去重" },
+      { label: "可追溯", detail: "记录模型、Prompt 摘要、种子、知识版本、后处理和成本" },
+    ],
+    exceptions: ["模型失败：按错误类型限次重试并保留 attempt", "文字乱码：自动进入 OCR 修复或重生", "品牌检查失败：阻止预览确认并定位违规元素"],
+    metrics: ["预览一次通过率", "预览确认率", "批量成功率", "平均重做次数", "单张成本", "审核通过率"],
+    confirmation: "用户明确确认唯一预览，且生成前规则全部通过。",
+    handoff: "把资产、生成谱系和预检结果交给审核 Agent。",
+    prohibited: "禁止处理视频、绕过预览门禁、改写商品事实或自动发布素材。",
+  },
+  {
+    key: "video",
+    name: "视频生成 Agent",
+    icon: "视",
+    stage: "阶段 3–5 · 视频生产",
+    purpose: "把确认需求转成可控的脚本、分镜和工程合成流程，完成单条预览与批量视频生产。",
+    responsibility: "内部完成脚本、分镜、镜头生成、配音、字幕、BGM、数字人和工程合成，不再拆分子 Agent。",
+    boundary: "只处理视频；不能把用户锁定镜头自动改写，预览阶段每次只能生成 1 条完整视频。",
+    input: ["需求与商品快照", "品牌/渠道/合规知识", "数字人/BGM/字幕模板", "参考视频与锁定镜头", "视频模型和合成能力"],
+    output: ["video_creative_plan", "script_and_storyboard", "shot_tasks", "preview_video", "composition_manifest"],
+    logic: [
+      { title: "规划视频结构", detail: "按时长分配 Hook、场景、卖点、证据、CTA 与免责声明，确保前后逻辑完整。" },
+      { title: "生成可编辑分镜", detail: "每镜包含时间、景别、画面、动作、台词、字幕、转场、资产和锁定状态。" },
+      { title: "执行生成前校验", detail: "校验总时长、口播字数、字幕安全区、音乐授权、人物授权和渠道格式。" },
+      { title: "逐镜生成与重试", detail: "镜头独立排队；失败只重做单镜，已锁定镜头保持不变。" },
+      { title: "工程合成预览", detail: "完成配音、字幕、BGM、Logo、CTA、转场和响度控制，只输出 1 条预览。" },
+      { title: "反馈与版本冻结", detail: "支持单镜重做、字幕修改、节奏调整和组件替换，形成新版本。" },
+      { title: "批量生产与送审", detail: "按受控变体生成完整视频，执行画音质检后移交审核 Agent。", gate: "完整预览确认后才能批量生产" },
+    ],
+    rules: [
+      { label: "时长误差", detail: "成片时长符合渠道模板，镜头时间总和必须一致" },
+      { label: "组件授权", detail: "人物、声音、音乐、字体和参考视频均需在授权期内" },
+      { label: "锁镜规则", detail: "用户锁定镜头后，任何重算不得修改其画面与台词" },
+      { label: "合成标准", detail: "统一字幕安全区、响度、帧率、码率、Logo 和免责声明" },
+    ],
+    exceptions: ["单镜失败：只重试该镜头，不重跑整条", "口播超时：优先压缩文案并请求确认", "音乐授权过期：阻止合成并推荐可用替代"],
+    metrics: ["完整预览成功率", "单镜重试率", "平均合成时长", "音画质检通过率", "每条成本", "审核通过率"],
+    confirmation: "用户确认完整预览，所有镜头和组件授权有效。",
+    handoff: "把成片、逐镜谱系、授权清单和预检结果交给审核 Agent。",
+    prohibited: "禁止处理静态图片任务、解锁用户锁定镜头或自动投放。",
+  },
+  {
+    key: "review",
+    name: "审核 Agent",
+    icon: "审",
+    stage: "生产完成 · 审核建议",
+    purpose: "检查素材技术质量、事实一致性、品牌规范、平台政策和内容风险，给人工审核提供可解释建议。",
+    responsibility: "汇总机器检测和规则命中，定位问题，给出风险等级、原因码、证据和可执行修改建议。",
+    boundary: "默认只输出审核建议；高风险与外部发布场景必须人工最终决定，不能替代法务或平台审核。",
+    input: ["素材及全部版本", "需求/商品/创意快照", "OCR/ASR/视觉检测结果", "品牌与平台规则", "授权与生成谱系"],
+    output: ["review_recommendation", "risk_level", "findings", "reason_codes", "remediation", "return_node"],
+    logic: [
+      { title: "技术质量检查", detail: "检查分辨率、比例、大小、清晰度、伪影、黑帧、音画同步、字幕和响度。" },
+      { title: "商品事实核对", detail: "将 OCR/ASR 与确认快照逐项比对，识别错价、错规格、夸大功效和遗漏声明。" },
+      { title: "品牌规范检查", detail: "检查 Logo、品牌色、字体、语气、商品露出和安全区。" },
+      { title: "平台与内容合规", detail: "执行敏感词、人物授权、版权、禁投类目、绝对化表述和渠道政策规则。" },
+      { title: "合并发现并定级", detail: "相同问题去重，按 L0 提示、L1 低风险、L2 高风险、L3 禁止发布分级。" },
+      { title: "生成审核建议", detail: "输出通过、人工复核、修改或拒绝建议，并指定返回需求、创意或生成节点。" },
+      { title: "等待最终决定", detail: "记录审核人决定、备注、规则版本和时间；决定不可被 Agent 静默覆盖。", gate: "高风险、抽检和外部发布必须人工确认" },
+    ],
+    rules: [
+      { label: "建议枚举", detail: "RECOMMEND_PASS / HUMAN_REVIEW_REQUIRED / RECOMMEND_REVISE / RECOMMEND_REJECT" },
+      { label: "风险等级", detail: "L3 直接阻断；L2 强制人工；L1 可按策略抽检；L0 仅提示" },
+      { label: "证据要求", detail: "每个 finding 必须包含 rule_id、位置、证据、严重度和修复建议" },
+      { label: "职责分离", detail: "素材创建者默认不能审核自己的素材，高风险禁止批量通过" },
+    ],
+    exceptions: ["规则冲突：按法律/平台 > 品牌 > 活动优先并升级人工", "检测结果不确定：不得建议直接通过", "驳回修改：创建新版本并回到指定节点"],
+    metrics: ["高风险召回率", "误报率", "人工改判率", "平均审核时长", "原因码完整率", "审核后违规率"],
+    confirmation: "按租户策略完成人工决定或低风险自动流转，并保存不可变审核记录。",
+    handoff: "通过后释放到素材库；修改则携带原因码返回指定生产节点。",
+    prohibited: "禁止隐藏命中规则、代替强制人工审核或自动将素材投放到媒体。",
+  },
+];
+
 const navGroups: Array<{
   label: string;
   items: Array<{ key: ModuleKey; icon: string; label: string; badge?: string }>;
@@ -134,6 +312,7 @@ const navGroups: Array<{
   {
     label: "智能资产",
     items: [
+      { key: "agents", icon: "◇", label: "Agent 中心" },
       { key: "knowledge", icon: "◎", label: "知识库" },
       { key: "analytics", icon: "↗", label: "素材数据" },
       { key: "settings", icon: "⚙", label: "系统管理" },
@@ -156,6 +335,11 @@ const titles: Record<ModuleKey, { eyebrow: string; title: string; subtitle: stri
     eyebrow: "VIDEO STUDIO",
     title: "视频生成",
     subtitle: "结构化脚本、分镜生成与工程合成，一条链路完成。",
+  },
+  agents: {
+    eyebrow: "AGENT ORCHESTRATION",
+    title: "Agent 中心",
+    subtitle: "查看五个 Agent 的职责、规则、交接条件与运行边界。",
   },
   tasks: {
     eyebrow: "PRODUCTION QUEUE",
@@ -572,6 +756,70 @@ function WorkflowStatusPanel({
   );
 }
 
+function AgentRuntimeBar({
+  mediaType,
+  stage,
+  state,
+  onOpen,
+}: {
+  mediaType: "image" | "video";
+  stage: number;
+  state: GenerationState;
+  onOpen: () => void;
+}) {
+  const isReview = state === "review" || state === "completed";
+  const activeKey: AgentKey =
+    stage <= 1
+      ? "requirement"
+      : stage === 2
+        ? "product"
+        : isReview
+          ? "review"
+          : mediaType;
+  const activeAgent = agentCatalog.find((agent) => agent.key === activeKey)!;
+
+  const getStatus = (key: AgentKey) => {
+    if ((key === "image" || key === "video") && key !== mediaType) return "skipped";
+    if (key === activeKey) return state === "completed" ? "done" : "active";
+    if (key === "requirement") return stage > 1 ? "done" : "waiting";
+    if (key === "product") return stage > 2 ? "done" : "waiting";
+    if (key === mediaType) return isReview ? "done" : "waiting";
+    return "waiting";
+  };
+
+  const statusCopy = {
+    done: "已完成",
+    active: "正在执行",
+    waiting: "等待接管",
+    skipped: "本任务旁路",
+  };
+
+  return (
+    <div className="agent-runtime-bar">
+      <div className="agent-runtime-summary">
+        <span>AGENT RUN</span>
+        <div>
+          <b>当前：{activeAgent.name}</b>
+          <small>{state === "completed" ? "审核已完成，素材已释放入库" : activeAgent.handoff}</small>
+        </div>
+        <button type="button" onClick={onOpen}>查看完整逻辑 →</button>
+      </div>
+      <div className="agent-runtime-flow" aria-label="五个 Agent 运行状态">
+        {agentCatalog.map((agent, index) => {
+          const agentStatus = getStatus(agent.key);
+          return (
+            <div className={`runtime-agent ${agentStatus}`} key={agent.key}>
+              <span>{agentStatus === "done" ? "✓" : agent.icon}</span>
+              <div><b>{agent.name.replace(" Agent", "")}</b><small>{statusCopy[agentStatus]}</small></div>
+              {index < agentCatalog.length - 1 && <i>→</i>}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function CreativeMockup({ video = false }: { video?: boolean }) {
   return (
     <div className={`creative-mockup ${video ? "video-mockup" : ""}`}>
@@ -758,14 +1006,20 @@ function GenerationWorkspace({
         onStateChange={setDemoState}
         onOpen={handleStatusAction}
       />
+      <AgentRuntimeBar
+        mediaType={mediaType}
+        stage={stage}
+        state={generationState}
+        onOpen={() => onNavigate("agents")}
+      />
       <div className="studio-grid">
         <div className="agent-panel">
           <div className="agent-panel-head">
             <div>
               <span className="agent-avatar">✦</span>
               <div>
-                <b>Muse Agent</b>
-                <small><i /> {currentCopy.label} · 第 {currentCopy.stage} 阶段</small>
+                <b>{agentCatalog.find((agent) => agent.key === (generationState === "review" || generationState === "completed" ? "review" : stage <= 1 ? "requirement" : stage === 2 ? "product" : mediaType))?.name}</b>
+                <small><i /> {currentCopy.label} · 受状态机约束</small>
               </div>
             </div>
             <button>⌁ 上下文</button>
@@ -964,6 +1218,147 @@ function GenerationWorkspace({
             </button>
           </div>
         </div>
+      </div>
+    </section>
+  );
+}
+
+function AgentCenterPage({ notify }: { notify: (message: string) => void }) {
+  const [selectedKey, setSelectedKey] = useState<AgentKey>("requirement");
+  const selected = agentCatalog.find((agent) => agent.key === selectedKey)!;
+
+  return (
+    <section className="content-page agent-center-page">
+      <div className="agent-center-hero">
+        <div>
+          <span className="agent-hero-kicker">FIVE AGENTS · ONE CONTROLLED WORKFLOW</span>
+          <h2>五个 Agent，一条可确认、可回退、可追溯的生产链。</h2>
+          <p>编排器和状态机属于平台服务，不计入 Agent。图片与视频各由一个生成 Agent 完整负责，审核 Agent 只给出可解释建议。</p>
+          <div className="agent-hero-actions">
+            <button className="primary-button" onClick={() => notify("已复制五大 Agent 架构摘要")}>复制架构摘要</button>
+            <a className="secondary-button" href="https://github.com/yunzhixu620-stack/muse-ai-creative-platform/blob/main/work/AI广告素材生成平台_五大Agent详细设计.md" target="_blank" rel="noreferrer">打开详细文档</a>
+          </div>
+        </div>
+        <div className="agent-hero-metrics">
+          <div><b>5</b><span>固定 Agent</span></div>
+          <div><b>4</b><span>业务确认门</span></div>
+          <div><b>1</b><span>每轮预览</span></div>
+          <div><b>0</b><span>自动投放</span></div>
+        </div>
+      </div>
+
+      <div className="agent-map-card">
+        <div className="agent-map-head">
+          <div><span>ORCHESTRATION MAP</span><h3>任务交接总览</h3></div>
+          <p><i /> 橙色表示当前查看 · 点击任一 Agent 展开完整规则</p>
+        </div>
+        <div className="agent-map-flow">
+          {agentCatalog.map((agent, index) => (
+            <div className="agent-map-node-wrap" key={agent.key}>
+              <button
+                type="button"
+                className={`agent-map-node ${selectedKey === agent.key ? "active" : ""}`}
+                onClick={() => setSelectedKey(agent.key)}
+                aria-pressed={selectedKey === agent.key}
+              >
+                <span>{agent.icon}</span>
+                <div><b>{agent.name}</b><small>{agent.stage}</small></div>
+              </button>
+              {index < agentCatalog.length - 1 && <i className={index === 1 ? "agent-branch-arrow" : ""}>→</i>}
+            </div>
+          ))}
+        </div>
+        <div className="agent-map-note">
+          <span>状态机服务</span>
+          <p>负责门禁、快照、重试、回退和事件记录；只调度 Agent，不拥有创意决策。</p>
+          <span>工具与模型服务</span>
+          <p>知识检索、Prompt 编译、模型路由、OCR/ASR 和合成均是内部能力，不新增 Agent。</p>
+        </div>
+      </div>
+
+      <div className="agent-detail-layout">
+        <aside className="agent-detail-nav" aria-label="Agent 列表">
+          <span>选择 Agent</span>
+          {agentCatalog.map((agent, index) => (
+            <button
+              type="button"
+              className={selectedKey === agent.key ? "active" : ""}
+              onClick={() => setSelectedKey(agent.key)}
+              key={agent.key}
+            >
+              <i>{index + 1}</i>
+              <span>{agent.name}<small>{agent.stage}</small></span>
+              <b>›</b>
+            </button>
+          ))}
+          <div className="agent-nav-principle">
+            <b>统一原则</b>
+            <p>规则优先于模型；用户确认优先于自动推进；所有修改以 JSON Patch 留痕。</p>
+          </div>
+        </aside>
+
+        <article className="agent-detail-card">
+          <header className="agent-detail-head">
+            <div className={`agent-large-icon agent-${selected.key}`}>{selected.icon}</div>
+            <div>
+              <span>{selected.stage}</span>
+              <h2>{selected.name}</h2>
+              <p>{selected.purpose}</p>
+            </div>
+            <span className="agent-version-badge"><i /> 已启用 · V1.0</span>
+          </header>
+
+          <div className="agent-scope-grid">
+            <div><span>核心职责</span><p>{selected.responsibility}</p></div>
+            <div><span>业务边界</span><p>{selected.boundary}</p></div>
+            <div><span>交接条件</span><p>{selected.confirmation}</p></div>
+            <div className="danger-scope"><span>明确禁止</span><p>{selected.prohibited}</p></div>
+          </div>
+
+          <div className="agent-io-grid">
+            <div>
+              <div className="agent-block-title"><span>INPUT</span><h3>输入上下文</h3></div>
+              <ul>{selected.input.map((item) => <li key={item}><i>↘</i>{item}</li>)}</ul>
+            </div>
+            <div>
+              <div className="agent-block-title"><span>OUTPUT</span><h3>结构化输出</h3></div>
+              <ul>{selected.output.map((item) => <li key={item}><i>↗</i>{item}</li>)}</ul>
+            </div>
+          </div>
+
+          <section className="agent-logic-section">
+            <div className="agent-section-heading">
+              <div><span>EXECUTION LOGIC</span><h3>执行逻辑与门禁</h3></div>
+              <small>从上到下顺序执行 · 任一硬规则失败即停止推进</small>
+            </div>
+            <div className="agent-logic-timeline">
+              {selected.logic.map((step, index) => (
+                <div className="agent-logic-step" key={step.title}>
+                  <span>{String(index + 1).padStart(2, "0")}</span>
+                  <div><b>{step.title}</b><p>{step.detail}</p>{step.gate && <em>确认门：{step.gate}</em>}</div>
+                </div>
+              ))}
+            </div>
+          </section>
+
+          <div className="agent-rules-grid">
+            <section>
+              <div className="agent-section-heading compact"><div><span>HARD RULES</span><h3>关键规则</h3></div></div>
+              <div className="rule-list">
+                {selected.rules.map((rule) => <div key={rule.label}><b>{rule.label}</b><p>{rule.detail}</p></div>)}
+              </div>
+            </section>
+            <section>
+              <div className="agent-section-heading compact"><div><span>EXCEPTIONS</span><h3>异常处理</h3></div></div>
+              <ul className="exception-list">{selected.exceptions.map((item) => <li key={item}><span>!</span>{item}</li>)}</ul>
+            </section>
+          </div>
+
+          <div className="agent-evaluation-strip">
+            <div><span>NEXT HANDOFF</span><p>{selected.handoff}</p></div>
+            <div><span>EVALUATION</span><p>{selected.metrics.join(" · ")}</p></div>
+          </div>
+        </article>
       </div>
     </section>
   );
@@ -1486,6 +1881,8 @@ export default function Home() {
             onNavigate={setActive}
           />
         );
+      case "agents":
+        return <AgentCenterPage notify={notify} />;
       case "tasks":
         return <TasksPage notify={notify} />;
       case "review":

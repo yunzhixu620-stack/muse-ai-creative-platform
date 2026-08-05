@@ -42,6 +42,10 @@ test("server-renders the MUSE product workspace", async () => {
   assert.match(html, /素材库/);
   assert.match(html, /知识库/);
   assert.match(html, /素材数据/);
+  assert.match(html, /Agent 中心/);
+  assert.match(html, /需求理解/);
+  assert.match(html, /审核/);
+  assert.match(html, /AGENT RUN/);
   assert.match(html, /理解需求/);
   assert.match(html, /单条预览/);
   assert.match(html, /批量生成/);
@@ -76,6 +80,10 @@ test("ships production metadata, preview art, and responsive styles", async () =
   assert.match(page, /SettingsPage/);
   assert.match(page, /type GenerationState/);
   assert.match(page, /WorkflowStatusPanel/);
+  assert.match(page, /AgentRuntimeBar/);
+  assert.match(page, /AgentCenterPage/);
+  assert.match(page, /const agentCatalog/);
+  assert.match(page, /五个 Agent，一条可确认、可回退、可追溯的生产链/);
   assert.match(page, /状态演示/);
   assert.match(page, /预览排队中/);
   assert.match(page, /单条预览生成中/);
@@ -85,6 +93,9 @@ test("ships production metadata, preview art, and responsive styles", async () =
   assert.match(css, /\.workflow-status/);
   assert.match(css, /\.state-simulator/);
   assert.match(css, /\.status-tone-running/);
+  assert.match(css, /\.agent-runtime-bar/);
+  assert.match(css, /\.agent-center-page/);
+  await access(new URL("../work/AI广告素材生成平台_五大Agent详细设计.md", import.meta.url));
   assert.match(css, /@media \(max-width:\s*1180px\)/);
   assert.match(css, /@media \(max-width:\s*760px\)/);
 
